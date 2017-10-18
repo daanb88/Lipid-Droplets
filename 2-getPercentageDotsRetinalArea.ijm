@@ -1,13 +1,16 @@
 //getPercentageDotsRetinalArea.ijm macro
-//v0.2 25/11/16 Daan van den Brink
+this_version = "v0.3"; 
+//19/09/2017 Daan van den Brink
+
 //
 //Macro to automatically draw an ROI around dots in an image.
 //Tries to exlude areas without dots and isolated dots
 //Then Measures the Int, Area and %Area of dots.
 //requires a directory of images; images with two channels; dots on the first channel
 //
-//Requires RoiManagerSplit.ijm
+//Requires RoiManagerSplit.ijm	ReturnDateTime.ijm
 //This traps errors that sometimes occur for no reason during ROI-split
+
 
 ignoreChannelError = true; //sometimes saving images messes up information on channels/slices, try to repair?
 swapChannels = false //Spots are assumed to be on Channel 1
@@ -17,6 +20,9 @@ nImage = 0;	//Start with image nImage+1
 nImageMeasured = 0; //Keep track of images measured for row number in results table.
 run("Clear Results");
 skipFirstImages = 0;	//put 0 to start with first.
+
+returnedDateTime = runMacro("ReturnDateTime",0);
+print("Quantification Macro started: ", returnedDateTime);
 if (skipFirstImages > 0 ) {
 	waitForUser("Skipping first " + skipFirstImages + " images.");
 }
@@ -102,7 +108,8 @@ for (l = skipFirstImages; l < list.length; l++) {
 			close(open_image);
 	}
 }
-
+//Save results to file
+saveResults();
 closeExceptions();
 print("Einde, images processed: " + nImage);
 
@@ -147,6 +154,8 @@ function createROI() {	//Automatically makes a large ROI surrounding the dots
 }
 
 function manageROIs() {
+	setBatchMode(false);
+	//yesNo("Continue?","go on?","well?");
 	//Set the Cut-off value (in pixels) for the minimum area of a Dot.
 	getPixelSize(pixelUnit, pixelWidth, pixelHeight);
 	//Using Pixels:
@@ -187,15 +196,17 @@ function manageROIs() {
 		didItWork = runMacro("roiManagerSplit");
 		if (didItWork !=1) {
 			print(" Something went wrong splitting the ROI, usually no problem: " + didItWork);
-		}
-	}
+		} 
+	} else { exit("Not a good ROI type (composite): " + Roi.getType);}
 	deleteArray = newArray();		//This will contain all Dots below cut-off.
 	keepArray = newArray();		//Will contain all Dots off sufficient size (passing cut-off).
 	myCount = roiManager("count");
-	//print(" " + myCount + " ROIs found");
+	//waitForUser(" " + myCount + " ROIs found");
 	//Go over all Dot-ROIs (ignoring 1st retinaArea ROI).
-	for (r=1; r<myCount; r++) {		
+	for (r=1; r<myCount; r++) {
+		showProgress(-r/(myCount-1));		
 		roiManager("Select",  r);
+		//waitForUser("In loop");
 		getStatistics(area);
 		//print("\nArea " + r + " is: " + area);
 		if (area < areaCutOff) {
@@ -205,14 +216,13 @@ function manageROIs() {
 			//print("Area " + r + " is: " + area + " -> should keep: " + r);
 			keepArray = Array.concat(keepArray,r); 
 		}
-
 	}
 	//print(" This is in deleteArray (n=" + deleteArray.length + ") & keepArray (n=" + keepArray.length + ")");
 	//Array.print(deleteArray);
 	//Array.print(keepArray);
 	run("Select None");
 	roiManager("Select", keepArray);
-	print(" " + keepArray.length + " ROIs found");	//in keepArray");
+	print(" " + keepArray.length + " ROIs found");	//in keepArray")
 	//yesNo("Check:", "Combine these for keep","");
 	if (keepArray.length > 1) {
 		roiManager("Combine");
@@ -242,15 +252,19 @@ function manageROIs() {
 	}
 	setBatchMode("show");
 	includeImage = yesNo("Check","This is the selection.","Include in results?");
-
-	//Dialog.create("Selected Area for Measurement");
-	//Dialog.addCheckbox("Include in Results??", true);
-	//Dialog.show;
-	//includeImage = Dialog.getCheckbox();
 	selectWindow(open_image);
 	
 	if (includeImage == true) {
 		//roiManager("Measure");
+		//Perform an additional count of Dots
+		roiManager("Select",1);
+		run("Find Maxima...", "noise=5 output=[Point Selection]");
+		getSelectionCoordinates(xCoordinates, yCoordinates);
+		findMaximaCount =xCoordinates.length; 
+		print("count="+ xCoordinates.length);
+		//waitForUser("Found Maxima above threshold");
+		//Measure statistics for Retina
+		roiManager("Select",1);
 		showStatistics(totalArea, totalMean, validDots);
 		nImageMeasured ++;
 	} else {
@@ -264,8 +278,10 @@ function manageROIs() {
 }
 
 function showStatistics(areaOfRetina, meanOfRetina, validTest) {
-      if (validTest == true ) { 
+      if (validTest == true ) {
+      	roiManager("Select",1); 
       	getStatistics(area, mean, min, max);
+      	//waitForUser("This is the area to be measured for Dot Area and Mean: " + area + "; " + mean);
       } else {
       	area = 0;
       	mean = 0;
@@ -275,16 +291,23 @@ function showStatistics(areaOfRetina, meanOfRetina, validTest) {
       //IntDen = area * mean;
       //"IntDen" (the product of Area and Mean Gray Value) and "RawIntDen" (the sum of the values of the pixels in the image or selection).
       IntDenOfRetina = areaOfRetina*meanOfRetina;
+      IntDenDots = mean * area; 
+      IntDenDotsPerRetinaA = IntDenDots / areaOfRetina;
+      nDots_size = area / findMaximaCount;
       setResult("Dir",			nImageMeasured, inputDir);
       setResult("File",			nImageMeasured,open_image);
       setResult("retinaArea",	nImageMeasured,areaOfRetina);
+      setResult("IntDenDots_per_Retina_Area",	nImageMeasured,IntDenDotsPerRetinaA);
+      setResult("Dots_IntDen",	nImageMeasured,IntDenDots);
       setResult("retinaIntDen",	nImageMeasured,IntDenOfRetina);
-      setResult("Area", 		nImageMeasured, area);
+	  setResult("Area", 		nImageMeasured, area);
       setResult("%Area", 		nImageMeasured, 100*area/areaOfRetina);
       setResult("Mean ", 		nImageMeasured, mean);
       setResult("Min ", 		nImageMeasured, min);
       setResult("Max ", 		nImageMeasured, max);
       setResult("nDots ", 		nImageMeasured, keepArray.length);
+      setResult("better_nDots ",nImageMeasured, findMaximaCount);
+      setResult("nDots_size ",nImageMeasured, nDots_size);
       updateResults();
   }
 
@@ -314,4 +337,16 @@ function closeExceptions() {
 	}
 	setBatchMode(false);
 	//print("Closed " + exceptionCount + " Exception windows");
+}
+
+function saveResults() {
+	//Save results table as CSV file
+	outputFile = inputDir+returnedDateTime + "Quant-" + this_version + ".csv";
+	if (File.exists(outputFile) == false ) {
+		f = File.open(outputFile);
+		File.close(f);
+	}
+	String.copyResults;
+	commaSeperatedResults = replace(String.paste,"\\h+",","); //replace all horizontal whitespace (not newlines) with comma's.
+	File.append(ding, commaSeperatedResults);
 }

@@ -1,5 +1,5 @@
 //getPercentageDotsRetinalArea.ijm macro
-this_version = "v0.3"; 
+this_version = "v0.45"; 
 //19/09/2017 Daan van den Brink
 
 //
@@ -20,13 +20,14 @@ nImage = 0;	//Start with image nImage+1
 nImageMeasured = 0; //Keep track of images measured for row number in results table.
 run("Clear Results");
 skipFirstImages = 0;	//put 0 to start with first.
+ROItool = "freehand"; //"oval" "rectangle" "brush"
 
 returnedDateTime = runMacro("ReturnDateTime",0);
 print("Quantification Macro started: ", returnedDateTime);
 if (skipFirstImages > 0 ) {
 	waitForUser("Skipping first " + skipFirstImages + " images.");
 }
-//print("\\Clear");
+print("\\Clear");
 
 run("Threshold..."); //to diplay the dialog.
 closeExceptions();	//Some Java errors cause exception windows to be created that clutter the desktop.
@@ -34,21 +35,22 @@ closeExceptions();	//Some Java errors cause exception windows to be created that
 run("Set Measurements...", "area mean integrated area_fraction display redirect=None decimal=3");
 //roiManager("Show None");
 
+print("Begin (", returnedDateTime, ")" );
 //Get the files, iterate and apply a Threshold to each. Then call functions.
+//list=newArray();
 inputDir = getDirectory("Input Directory");
-print("Begin");
-
-list = getFileList(inputDir);	
+list = orderList(inputDir);
+	
 for (l = skipFirstImages; l < list.length; l++) {
 	if (endsWith(list[l], fileExtension)) {
-		print("Reading file: " + list[l]);
+		print("\nReading file: " + list[l]);
 		setBatchMode(true);
 		roiManager("reset");
 		//open(list[l]);
-		run("Bio-Formats Windowless Importer", "open=["+ inputDir + list[l] + "]");
+		run("Bio-Formats Windowless Importer", "open=["+ inputDir + list[l] + "] autoscale color_mode=Default");
 		//check if images contains 2 channels, try to repair
 		Stack.getDimensions(x, y, channels, slices, frames);
-		print("Now here");
+		//print("Now here");
 		if(channels < 2 && ignoreChannelError ==true) {
 			run("Re-order Hyperstack ...", "channels=[Slices (z)] slices=[Channels (c)] frames=[Frames (t)]");
 			Stack.getDimensions(x, y, channels, slices, frames);
@@ -58,8 +60,10 @@ for (l = skipFirstImages; l < list.length; l++) {
 		Stack.setDisplayMode("composite");
 		Stack.setChannel(1);
 		run("Enhance Contrast", "saturated=0.35");
+		run("Green");		
 		Stack.setChannel(2);
 		run("Enhance Contrast", "saturated=0.35");
+		run("Red");
 		setBatchMode("show");
 		
 		useImage = yesNo("Check Retina", "Does this retina look OK?", "Use image");
@@ -88,9 +92,18 @@ for (l = skipFirstImages; l < list.length; l++) {
 			open_image = getTitle();
 			//Find the Dots
 			run("Subtract Background...", "rolling=10");
-			setAutoThreshold("Otsu dark");
+			//On first run do auto Threshold
+			print(" nImage is:", nImage+1, "en skipFirstImages is:",skipFirstImages, "out of", list.length, "files.");
+			if(nImage==0) {	setAutoThreshold("Otsu dark");}
+			else { 
+				getMinAndMax(bin, MaxPixel);
+				setThreshold(minThreshold, MaxPixel);
+			}
 			setBatchMode("show");
 			waitForUser("Please Check Threshold");
+			//remember Threshold
+			getThreshold(minThreshold, maxThreshold);
+			print(" Threshold set at:", d2s(minThreshold, 0), "-", d2s(maxThreshold, 0) + ".");
 			selectWindow(open_image);
 			setBatchMode("hide");
 			//Make the large ROI surrounding the dots, and measure for dot-area wihtin it.
@@ -109,17 +122,19 @@ for (l = skipFirstImages; l < list.length; l++) {
 	}
 }
 //Save results to file
-saveResults();
+if (nImage>0) { saveResults() ;}
 closeExceptions();
-print("Einde, images processed: " + nImage);
+showMessage("Einde, images processed: " + nImage);
+//End of macro
+
 
 function retinaRoi () {
 //Create an outline around complete area of retina that has Dots.
-	setTool("freehand");
 	//Wait for a ROI to be drawn by user.
 	roiType =-1; 
 	setBatchMode("show");
 	while (roiType == -1 ) {
+		setTool(ROItool);
 		waitForUser("Draw a ROI around a good bit of retina and press OK\n make sure there is at least one dot!");
 		roiType = selectionType();
 	}
@@ -169,8 +184,8 @@ function manageROIs() {
 	//radiusCutOffPx = sqrt(areaCutOffPx/PI);//r = sqrt(A/pi)
 	//makeOval((getWidth()/2)-((radiusCutOffPx)/2), (getWidth()/2)-((radiusCutOffPx)/2),(radiusCutOffPx)*2,(radiusCutOffPx)*2);
 	//yesNo("Check", "Is this a good Area cut-off?","");
-	print(" Handling window: " + getTitle() );
-	print(" Resolution is: " + pixelWidth + pixelUnit + "/pixel.\tCut-off area is " + areaCutOff + pixelUnit +"^2 (" + areaCutOffPx + "^2 pixels)."); 
+	//print(" Handling window: " + getTitle() );
+	print(" Resolution is: " + pixelWidth + pixelUnit + "/pixel.\tROI cut-off is " + areaCutOff + pixelUnit +"^2 (" + areaCutOffPx + "^2 pixels)."); 
 	roiManager("Add");	//Adding all Dots in the frame
 	wait(100);
 	//waitForUser("Check, Did the Dots get added to selection?");
@@ -222,7 +237,6 @@ function manageROIs() {
 	//Array.print(keepArray);
 	run("Select None");
 	roiManager("Select", keepArray);
-	print(" " + keepArray.length + " ROIs found");	//in keepArray")
 	//yesNo("Check:", "Combine these for keep","");
 	if (keepArray.length > 1) {
 		roiManager("Combine");
@@ -256,12 +270,13 @@ function manageROIs() {
 	
 	if (includeImage == true) {
 		//roiManager("Measure");
-		//Perform an additional count of Dots
+		//Perform an additional more precise count of Dots (Better Dots)
 		roiManager("Select",1);
 		run("Find Maxima...", "noise=5 output=[Point Selection]");
+		waitForUser("Found these maxima within the Dots-ROI");
 		getSelectionCoordinates(xCoordinates, yCoordinates);
-		findMaximaCount =xCoordinates.length; 
-		print("count="+ xCoordinates.length);
+		findMaximaCount =xCoordinates.length;
+		print(" " + keepArray.length + " ROIs found with", xCoordinates.length, "maxima.");	//in keepArray") 
 		//waitForUser("Found Maxima above threshold");
 		//Measure statistics for Retina
 		roiManager("Select",1);
@@ -270,11 +285,6 @@ function manageROIs() {
 	} else {
 		print("User didn't include results for: " + open_image);
 	}
-
-	//roiManager("Select", 0);
-	//roiManager("Delete");
-	//roiManager("Select", 0);
-
 }
 
 function showStatistics(areaOfRetina, meanOfRetina, validTest) {
@@ -294,12 +304,12 @@ function showStatistics(areaOfRetina, meanOfRetina, validTest) {
       IntDenDots = mean * area; 
       IntDenDotsPerRetinaA = IntDenDots / areaOfRetina;
       nDots_size = area / findMaximaCount;
-      setResult("Dir",			nImageMeasured, inputDir);
-      setResult("File",			nImageMeasured,open_image);
-      setResult("retinaArea",	nImageMeasured,areaOfRetina);
-      setResult("IntDenDots_per_Retina_Area",	nImageMeasured,IntDenDotsPerRetinaA);
-      setResult("Dots_IntDen",	nImageMeasured,IntDenDots);
-      setResult("retinaIntDen",	nImageMeasured,IntDenOfRetina);
+      setResult("Dir",			nImageMeasured, replace(inputDir, " ", "_"));
+      setResult("File",			nImageMeasured, replace(open_image, " ", "_"));
+      setResult("retinaArea",	nImageMeasured ,areaOfRetina);
+      setResult("IntDenDots_per_Retina_Area",	nImageMeasured, IntDenDotsPerRetinaA);
+      setResult("Dots_IntDen",	nImageMeasured, IntDenDots);
+      setResult("retinaIntDen",	nImageMeasured, IntDenOfRetina);
 	  setResult("Area", 		nImageMeasured, area);
       setResult("%Area", 		nImageMeasured, 100*area/areaOfRetina);
       setResult("Mean ", 		nImageMeasured, mean);
@@ -307,9 +317,39 @@ function showStatistics(areaOfRetina, meanOfRetina, validTest) {
       setResult("Max ", 		nImageMeasured, max);
       setResult("nDots ", 		nImageMeasured, keepArray.length);
       setResult("better_nDots ",nImageMeasured, findMaximaCount);
-      setResult("nDots_size ",nImageMeasured, nDots_size);
+      setResult("nDots_size ",	nImageMeasured, nDots_size);
       updateResults();
   }
+
+function orderList(inputDir) {
+	//Makes a list of file names and sorts by userinputted prefix.
+	//Variable is input directory
+	//Dialog.create("Sort File List");
+	//Dialog.addMessage("If you want to start with a file, type a prefix");
+	//Dialog.addMessage("(Otherwise leave empty)");
+	//Dialog.addString("file prefix:", "", 10);
+	//Dialog.show();
+	//prefixSort = Dialog.getString();
+	prefixSort = getString("If you want to start with a specific file, type a prefix", "");
+	list = getFileList(inputDir);
+	Array.print(list);
+	if (prefixSort == "") {
+		return list;	
+	}
+	print("Sorting list by", prefixSort, "...");
+	orderedList = newArray();
+	unorderedList = newArray();
+	for (l=0; l < list.length; l++) {
+		if(startsWith(list[l], prefixSort)==true) {
+			orderedList = Array.concat(orderedList, list[l]);
+		} else {
+			unorderedList = Array.concat(unorderedList, list[l]);
+		}
+	}
+	list=Array.concat(orderedList, unorderedList);
+	Array.print(list);
+	return list;
+}
 
 function yesNo(title, message, checkbox) {
 	Dialog.create(title);
@@ -348,5 +388,5 @@ function saveResults() {
 	}
 	String.copyResults;
 	commaSeperatedResults = replace(String.paste,"\\h+",","); //replace all horizontal whitespace (not newlines) with comma's.
-	File.append(ding, commaSeperatedResults);
+	File.append(commaSeperatedResults, outputFile);
 }

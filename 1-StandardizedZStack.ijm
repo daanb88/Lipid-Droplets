@@ -1,7 +1,7 @@
 //StandardizedZStack macro
 //Macro to get equivalent-sized Z-projections
 //for LD analysis
-//v0.3 08/12/16 Daan van den Brink
+//v0.31 08/12/16 Daan van den Brink
 //Requires CheckImageDimensions.ijm macro
 //Requires a 2-Channel image.
 //Do A Guassian Blur 3D
@@ -13,6 +13,9 @@ redChannel = 2;
 swapChannels = NaN;
 //Default thickness of projection
 defaultRange = 5; //um
+//Check if dependent macro can be found:
+pathCheckImageDimensions = checkForMacro("CheckImageDimensions.ijm");
+print("Path for pathCheckImageDimensions macro is", pathCheckImageDimensions);
 
 //Default file type
 fileNameStart = "";	//Change to use a subset of images in a folder.
@@ -64,7 +67,7 @@ function processFolder(input) {
 			print("Opened: " + currentFile);
 			//Need to check for multiple z and channels, otherwise crash!
 			setBatchMode("show");
-			check = runMacro("CheckImageDimensions", toString(currentID)+", 0, 0, 2, 2, 0" );	//(targetID, minimumWidth, minimumHeight, minimumChannels, minimumSlices, minimumFrames)
+			check = runMacro(pathCheckImageDimensions+"CheckImageDimensions", toString(currentID)+", 0, 0, 2, 2, 0" );	//(targetID, minimumWidth, minimumHeight, minimumChannels, minimumSlices, minimumFrames)
 			setBatchMode("hide");
 			if (check == 0) {
 			 	//when the file is not to be processed, put it on a list for troubleshooting
@@ -279,3 +282,11 @@ function timeStamp() {
 	return ( yearString + monthString + dayString );
 }
 
+function checkForMacro(fileName) {
+	if (File.exists(fileName) == false ) {
+		newMacroPath = getDirectory("Can't find '" + fileName + "' macro, please find the directory for me if you can.");
+	} else {
+		newMacroPath = "";
+	}
+	return newMacroPath;
+}
